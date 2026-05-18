@@ -129,14 +129,13 @@ function ChatPanel({
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
-      flex: fullScreen ? 1 : undefined,
+      flex: 1, minHeight: 0,
       height: fullScreen ? undefined : '100%',
     }}>
       {/* Messages */}
       <div style={{
-        flex: 1, overflowY: 'auto', padding: '10px 14px',
+        flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 14px',
         display: 'flex', flexDirection: 'column', gap: 8,
-        minHeight: fullScreen ? 0 : 120,
         maxHeight: fullScreen ? undefined : 260,
       }}>
         <div ref={topRef} />
@@ -423,7 +422,7 @@ export default function SetupGuideReview() {
                 cursor: 'pointer', color: '#be185d', lineHeight: 1,
               }}>✕</button>
             </div>
-            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <ChatPanel
                 stepId={expandedStep}
                 messages={messages}
