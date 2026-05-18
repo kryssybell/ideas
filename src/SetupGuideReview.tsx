@@ -73,7 +73,9 @@ function ChatPanel({
   onClose?: () => void;
 }) {
   const [draft, setDraft] = useState('');
+  const topRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const justSent = useRef(false);
   const stepMessages = messages.filter(m => m.step_id === stepId);
   const isMobile = useIsMobile();
 
@@ -81,12 +83,20 @@ function ChatPanel({
     setDraft(prev => prev ? `${prev} ${t}` : t);
   });
 
+  // Scroll to top when opening, scroll to bottom only after sending
   useEffect(() => {
-    if (fullScreen) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!fullScreen) return;
+    if (justSent.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+      justSent.current = false;
+    } else {
+      topRef.current?.scrollIntoView({ behavior: 'instant' });
+    }
   }, [messages, fullScreen]);
 
   function send() {
     if (!draft.trim()) return;
+    justSent.current = true;
     onSend(stepId, draft.trim());
     setDraft('');
   }
@@ -129,6 +139,7 @@ function ChatPanel({
         minHeight: fullScreen ? 0 : 120,
         maxHeight: fullScreen ? undefined : 260,
       }}>
+        <div ref={topRef} />
         {stepMessages.length === 0 && (
           <div style={{ color: '#be185d', opacity: 0.35, fontSize: 13, textAlign: 'center', marginTop: 16 }}>
             No notes yet — type or speak below
