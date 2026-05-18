@@ -198,33 +198,25 @@ export default function SetupGuideReview() {
                     {/* Notes columns */}
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
 
-                      {/* Your notes */}
-                      <NoteField
-                        label="Your notes"
+                      {/* Person 1 — dark purple */}
+                      <BareNoteField
                         value={notes[step.id] ?? ''}
                         onChange={t => handleChange(step.id, t, 'content')}
                         onTranscript={t => handleTranscript(step.id, 'content', t)}
                         syncState={syncState[`${step.id}-content`] ?? null}
-                        textColor="#6b21a8"
-                        borderColor="#fce7f3"
+                        textColor="#3b0764"
+                        accentColor="#7e22ce"
                       />
 
-                      {/* Reviewer notes */}
-                      <div style={{ borderTop: '2px solid #dbeafe' }}>
-                        <NoteField
-                          label="Reviewer notes"
+                      {/* Person 2 — dark blue */}
+                      <div style={{ borderTop: '2px solid #e0e7ff' }}>
+                        <BareNoteField
                           value={reviewerNotes[step.id] ?? ''}
                           onChange={t => handleChange(step.id, t, 'reviewer_content')}
                           onTranscript={t => handleTranscript(step.id, 'reviewer_content', t)}
                           syncState={syncState[`${step.id}-reviewer_content`] ?? null}
-                          textColor="#1d4ed8"
-                          borderColor="#dbeafe"
-                          headerBg="#eff6ff"
-                          labelColor="#1d4ed8"
-                          micBg="#dbeafe"
-                          micBorder="#bfdbfe"
-                          micStroke="#1d4ed8"
-                          micActive="#3b82f6"
+                          textColor="#1e3a8a"
+                          accentColor="#2563eb"
                         />
                       </div>
                     </div>
@@ -239,78 +231,62 @@ export default function SetupGuideReview() {
   );
 }
 
-// ── Note field ────────────────────────────────────────────────────────────────
+// ── Bare note field (no chrome, just text + mic) ─────────────────────────────
 
-function NoteField({
-  label, value, onChange, onTranscript, syncState,
-  textColor, borderColor,
-  headerBg = '#fdf2f8', labelColor = '#be185d',
-  micBg = '#fce7f3', micBorder = '#fbcfe8', micStroke = '#be185d', micActive = '#ec4899',
-}: {
-  label: string;
+function BareNoteField({ value, onChange, onTranscript, syncState, textColor, accentColor }: {
   value: string;
   onChange: (t: string) => void;
   onTranscript: (t: string) => void;
   syncState: 'saving' | 'saved' | null;
   textColor: string;
-  borderColor: string;
-  headerBg?: string;
-  labelColor?: string;
-  micBg?: string;
-  micBorder?: string;
-  micStroke?: string;
-  micActive?: string;
+  accentColor: string;
 }) {
   const { listening, start, stop } = useSpeech(onTranscript);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '8px 14px', background: headerBg,
-        borderBottom: `1px solid ${borderColor}`, gap: 8,
-      }}>
-        <span style={{ fontWeight: 800, fontSize: 12, color: labelColor }}>{label}</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          {syncState === 'saving' && <span style={{ fontSize: 10, color: labelColor, opacity: 0.6 }}>Saving…</span>}
-          {syncState === 'saved' && <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>Saved!</span>}
-          <button
-            onClick={listening ? stop : start}
-            title={listening ? 'Stop' : 'Speak'}
-            style={{
-              background: listening ? micActive : micBg,
-              border: `2px solid ${listening ? micStroke : micBorder}`,
-              borderRadius: '50%', width: 26, height: 26,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s',
-              boxShadow: listening ? `0 0 0 3px ${micActive}33` : 'none',
-            }}
-          >
-            {listening ? (
-              <svg width="9" height="9" viewBox="0 0 12 12" fill="#fff"><rect x="1" y="1" width="10" height="10" rx="2" /></svg>
-            ) : (
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={micStroke} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="2" width="6" height="12" rx="3" />
-                <path d="M5 10a7 7 0 0 0 14 0" />
-                <line x1="12" y1="19" x2="12" y2="22" />
-                <line x1="9" y1="22" x2="15" y2="22" />
-              </svg>
-            )}
-          </button>
-        </div>
-      </div>
+    <div style={{ position: 'relative' }}>
       <textarea
         value={value}
         onChange={e => onChange(e.target.value)}
-        placeholder={`Type or speak ${label.toLowerCase()}…`}
+        placeholder="Type or speak…"
         style={{
           border: 'none', outline: 'none',
           color: textColor, fontSize: 14, lineHeight: 1.7,
-          padding: '12px 14px', resize: 'none', fontFamily: FONT,
-          background: 'transparent', minHeight: 100,
+          padding: '14px 44px 14px 14px',
+          resize: 'none', fontFamily: FONT,
+          background: 'transparent', minHeight: 120,
           width: '100%', boxSizing: 'border-box',
         }}
       />
+      {/* Mic + saved indicator — floating top-right */}
+      <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+        {syncState === 'saved' && (
+          <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>✓</span>
+        )}
+        <button
+          onClick={listening ? stop : start}
+          title={listening ? 'Stop' : 'Speak'}
+          style={{
+            background: listening ? accentColor : 'transparent',
+            border: `1.5px solid ${listening ? accentColor : accentColor + '55'}`,
+            borderRadius: '50%', width: 26, height: 26,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            cursor: 'pointer', transition: 'all 0.15s',
+            boxShadow: listening ? `0 0 0 3px ${accentColor}33` : 'none',
+          }}
+        >
+          {listening ? (
+            <svg width="9" height="9" viewBox="0 0 12 12" fill="#fff"><rect x="1" y="1" width="10" height="10" rx="2" /></svg>
+          ) : (
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={accentColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="2" width="6" height="12" rx="3" />
+              <path d="M5 10a7 7 0 0 0 14 0" />
+              <line x1="12" y1="19" x2="12" y2="22" />
+              <line x1="9" y1="22" x2="15" y2="22" />
+            </svg>
+          )}
+        </button>
+      </div>
     </div>
   );
 }
