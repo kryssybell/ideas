@@ -2,15 +2,12 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import screenshots from './setup-guide-screenshots.json';
 import { supabase } from './lib/supabase';
 
-interface ScreenshotEntry {
-  id: string;
-  title: string;
-  stage: string;
-  dataUrl: string;
-}
+interface ScreenshotEntry { id: string; title: string; stage: string; dataUrl: string; }
+interface Message { id: string; step_id: string; author: 'purple' | 'blue'; content: string; created_at: string; }
 
 const FONT = "'Nunito', sans-serif";
-
+const PURPLE = '#3b0764';
+const BLUE   = '#1e3a8a';
 const STAGE_COLORS: Record<string, string> = {
   'Foundation — Local Setup':     '#f9a8d4',
   'Save Your Work to GitHub':     '#93c5fd',
@@ -20,20 +17,13 @@ const STAGE_COLORS: Record<string, string> = {
   'Keeping Going':                '#fca5a5',
 };
 
-// ── Speech ──────────────────────────────────────────────────────────────────
-
-interface SpeechRecognitionEvent extends Event {
-  results: SpeechRecognitionResultList;
-}
+// ── Speech ───────────────────────────────────────────────────────────────────
+interface SpeechRecognitionEvent extends Event { results: SpeechRecognitionResultList; }
 interface SpeechRecognitionInstance extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
+  continuous: boolean; interimResults: boolean; lang: string;
+  start(): void; stop(): void;
   onresult: ((e: SpeechRecognitionEvent) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
+  onerror: (() => void) | null; onend: (() => void) | null;
 }
 declare global {
   interface Window {
@@ -41,94 +31,247 @@ declare global {
     webkitSpeechRecognition: new () => SpeechRecognitionInstance;
   }
 }
-
-function useSpeech(onTranscript: (text: string) => void) {
+function useSpeech(onTranscript: (t: string) => void) {
   const recRef = useRef<SpeechRecognitionInstance | null>(null);
   const [listening, setListening] = useState(false);
   function start() {
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
     if (!SR) { alert('Speech recognition not supported. Try Chrome or Safari.'); return; }
     const rec = new SR();
-    rec.continuous = true;
-    rec.interimResults = false;
-    rec.lang = 'en-US';
-    rec.onresult = (e: SpeechRecognitionEvent) => {
+    rec.continuous = true; rec.interimResults = false; rec.lang = 'en-US';
+    rec.onresult = (e: SpeechRecognitionEvent) =>
       onTranscript(Array.from(e.results).map(r => r[0].transcript).join(' '));
-    };
     rec.onerror = () => setListening(false);
     rec.onend = () => setListening(false);
-    rec.start();
-    recRef.current = rec;
-    setListening(true);
+    rec.start(); recRef.current = rec; setListening(true);
   }
   function stop() { recRef.current?.stop(); setListening(false); }
   return { listening, start, stop };
 }
 
+// ── Mobile detection ─────────────────────────────────────────────────────────
+function useIsMobile() {
+  const [mobile, setMobile] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const h = () => setMobile(window.innerWidth < 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return mobile;
+}
 
-// ── Main ─────────────────────────────────────────────────────────────────────
+// ── Chat panel ───────────────────────────────────────────────────────────────
+function ChatPanel({
+  stepId, messages, myColor, onSend, fullScreen, onExpand, onClose,
+}: {
+  stepId: string;
+  messages: Message[];
+  myColor: 'purple' | 'blue';
+  onSend: (stepId: string, content: string) => void;
+  fullScreen?: boolean;
+  onExpand?: () => void;
+  onClose?: () => void;
+}) {
+  const [draft, setDraft] = useState('');
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const stepMessages = messages.filter(m => m.step_id === stepId);
+  const isMobile = useIsMobile();
 
-export default function SetupGuideReview() {
-  const [notes, setNotes] = useState<Record<string, string>>({});
-  const [reviewerNotes, setReviewerNotes] = useState<Record<string, string>>({});
-  const [syncState, setSyncState] = useState<Record<string, 'saving' | 'saved' | null>>({});
-  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  const pages = screenshots as ScreenshotEntry[];
+  const { listening, start, stop } = useSpeech((t) => {
+    setDraft(prev => prev ? `${prev} ${t}` : t);
+  });
 
   useEffect(() => {
-    async function loadAndMigrate() {
-      // Load existing notes from Supabase
-      const { data } = await supabase.from('notes').select('step_id, content, reviewer_content');
-      const n: Record<string, string> = {};
-      const r: Record<string, string> = {};
-      (data ?? []).forEach((row: { step_id: string; content: string; reviewer_content: string }) => {
-        n[row.step_id] = row.content;
-        r[row.step_id] = row.reviewer_content;
-      });
+    if (fullScreen) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, fullScreen]);
 
-      // Migrate any notes still in localStorage
-      const LEGACY_KEY = 'setup-guide-notes';
-      try {
-        const raw = localStorage.getItem(LEGACY_KEY);
-        if (raw) {
-          const local: Record<string, string> = JSON.parse(raw);
-          const toUpsert = Object.entries(local)
-            .filter(([id, content]) => content.trim() && !n[id])
-            .map(([step_id, content]) => ({ step_id, content, reviewer_content: '' }));
-          if (toUpsert.length > 0) {
-            await supabase.from('notes').upsert(toUpsert, { onConflict: 'step_id' });
-            toUpsert.forEach(({ step_id, content }) => { n[step_id] = content; });
+  function send() {
+    if (!draft.trim()) return;
+    onSend(stepId, draft.trim());
+    setDraft('');
+  }
+
+  const collapsed = isMobile && !fullScreen;
+
+  if (collapsed) {
+    const last = stepMessages[stepMessages.length - 1];
+    return (
+      <button
+        onClick={onExpand}
+        style={{
+          width: '100%', textAlign: 'left', background: 'none', border: 'none',
+          borderTop: '2px solid #fbcfe8', padding: '10px 14px',
+          display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+          fontFamily: FONT,
+        }}
+      >
+        <span style={{ fontSize: 18 }}>💬</span>
+        <span style={{ fontSize: 13, color: last ? (last.author === 'purple' ? PURPLE : BLUE) : '#be185d', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {last ? last.content : 'Tap to add notes…'}
+        </span>
+        <span style={{ fontSize: 12, color: '#be185d', opacity: 0.5, flexShrink: 0 }}>
+          {stepMessages.length > 0 ? `${stepMessages.length} msg${stepMessages.length !== 1 ? 's' : ''}` : ''}  ›
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column',
+      flex: fullScreen ? 1 : undefined,
+      height: fullScreen ? undefined : '100%',
+    }}>
+      {/* Messages */}
+      <div style={{
+        flex: 1, overflowY: 'auto', padding: '10px 14px',
+        display: 'flex', flexDirection: 'column', gap: 8,
+        minHeight: fullScreen ? 0 : 120,
+        maxHeight: fullScreen ? undefined : 260,
+      }}>
+        {stepMessages.length === 0 && (
+          <div style={{ color: '#be185d', opacity: 0.35, fontSize: 13, textAlign: 'center', marginTop: 16 }}>
+            No notes yet — type or speak below
+          </div>
+        )}
+        {stepMessages.map(msg => (
+          <div key={msg.id} style={{
+            fontSize: 14, lineHeight: 1.6,
+            color: msg.author === 'purple' ? PURPLE : BLUE,
+            fontWeight: 500,
+          }}>
+            {msg.content}
+          </div>
+        ))}
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      <div style={{
+        borderTop: '1px solid #fbcfe8', padding: '8px 10px',
+        display: 'flex', gap: 8, alignItems: 'flex-end',
+        background: '#fdf2f8',
+      }}>
+        <textarea
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          placeholder="Type or speak…"
+          rows={2}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+          style={{
+            flex: 1, border: '1.5px solid #fbcfe8', borderRadius: 10,
+            padding: '8px 10px', fontSize: 14, fontFamily: FONT,
+            color: myColor === 'purple' ? PURPLE : BLUE,
+            outline: 'none', resize: 'none', background: '#fff',
+            lineHeight: 1.5,
+          }}
+        />
+        {/* Mic */}
+        <button onClick={listening ? stop : start} style={{
+          background: listening ? (myColor === 'purple' ? '#7e22ce' : '#2563eb') : '#fff',
+          border: `1.5px solid ${myColor === 'purple' ? '#c4b5fd' : '#bfdbfe'}`,
+          borderRadius: '50%', width: 36, height: 36, flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', transition: 'all 0.15s',
+          boxShadow: listening ? `0 0 0 3px ${myColor === 'purple' ? '#c4b5fd' : '#bfdbfe'}` : 'none',
+        }}>
+          {listening
+            ? <svg width="10" height="10" viewBox="0 0 12 12" fill="#fff"><rect x="1" y="1" width="10" height="10" rx="2" /></svg>
+            : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={myColor === 'purple' ? '#7e22ce' : '#2563eb'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="2" width="6" height="12" rx="3" />
+                <path d="M5 10a7 7 0 0 0 14 0" />
+                <line x1="12" y1="19" x2="12" y2="22" />
+                <line x1="9" y1="22" x2="15" y2="22" />
+              </svg>
           }
-          localStorage.removeItem(LEGACY_KEY);
+        </button>
+        {/* Send */}
+        <button onClick={send} disabled={!draft.trim()} style={{
+          background: myColor === 'purple' ? '#7e22ce' : '#2563eb',
+          color: '#fff', border: 'none', borderRadius: 10,
+          padding: '0 14px', height: 36, flexShrink: 0,
+          fontFamily: FONT, fontWeight: 700, fontSize: 13,
+          cursor: draft.trim() ? 'pointer' : 'default',
+          opacity: draft.trim() ? 1 : 0.4,
+        }}>Send</button>
+      </div>
+
+      {onClose && (
+        <button onClick={onClose} style={{
+          background: 'none', border: 'none', padding: '6px',
+          color: '#be185d', fontFamily: FONT, fontSize: 13,
+          cursor: 'pointer', textAlign: 'center',
+        }}>✕ Close</button>
+      )}
+    </div>
+  );
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+export default function SetupGuideReview() {
+  const pages = screenshots as ScreenshotEntry[];
+  const isMobile = useIsMobile();
+
+  const [myColor, setMyColor] = useState<'purple' | 'blue' | null>(
+    () => (localStorage.getItem('my-color') as 'purple' | 'blue' | null)
+  );
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [expandedStep, setExpandedStep] = useState<string | null>(null);
+
+  // Load messages + migrate old notes
+  useEffect(() => {
+    async function load() {
+      const { data: msgs } = await supabase
+        .from('feedback')
+        .select('*')
+        .order('created_at', { ascending: true });
+      const existing = (msgs ?? []) as Message[];
+      const existingStepIds = new Set(existing.map(m => m.step_id));
+
+      // Migrate old notes table → feedback (one-time)
+      if (!localStorage.getItem('notes-migrated-v2')) {
+        const { data: notesData } = await supabase
+          .from('notes')
+          .select('step_id, content, reviewer_content');
+        const toInsert: Omit<Message, 'id'>[] = [];
+        (notesData ?? []).forEach((row: { step_id: string; content: string; reviewer_content: string }) => {
+          if (row.content?.trim() && !existingStepIds.has(row.step_id)) {
+            toInsert.push({ step_id: row.step_id, author: 'purple', content: row.content.trim(), created_at: new Date().toISOString() });
+          }
+          if (row.reviewer_content?.trim()) {
+            toInsert.push({ step_id: row.step_id, author: 'blue', content: row.reviewer_content.trim(), created_at: new Date().toISOString() });
+          }
+        });
+        if (toInsert.length > 0) {
+          const { data: inserted } = await supabase.from('feedback').insert(toInsert).select();
+          if (inserted) existing.push(...(inserted as Message[]));
         }
-      } catch { /* ignore */ }
+        localStorage.setItem('notes-migrated-v2', 'true');
+      }
 
-      setNotes(n);
-      setReviewerNotes(r);
+      setMessages(existing);
     }
-    loadAndMigrate();
+    load();
+
+    // Real-time: one channel for all new messages
+    const channel = supabase.channel('all-feedback')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'feedback' },
+        (payload) => setMessages(prev => [...prev, payload.new as Message]))
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   }, []);
 
-  const saveNote = useCallback(async (id: string, content: string, field: 'content' | 'reviewer_content') => {
-    setSyncState(prev => ({ ...prev, [`${id}-${field}`]: 'saving' }));
-    await supabase.from('notes').upsert({ step_id: id, [field]: content, updated_at: new Date().toISOString() }, { onConflict: 'step_id' });
-    setSyncState(prev => ({ ...prev, [`${id}-${field}`]: 'saved' }));
-    setTimeout(() => setSyncState(prev => ({ ...prev, [`${id}-${field}`]: null })), 2000);
-  }, []);
+  const sendMessage = useCallback(async (stepId: string, content: string) => {
+    if (!myColor) return;
+    await supabase.from('feedback').insert({ step_id: stepId, author: myColor, content });
+  }, [myColor]);
 
-  function handleChange(id: string, text: string, field: 'content' | 'reviewer_content') {
-    if (field === 'content') setNotes(prev => ({ ...prev, [id]: text }));
-    else setReviewerNotes(prev => ({ ...prev, [id]: text }));
-    const key = `${id}-${field}`;
-    clearTimeout(saveTimers.current[key]);
-    saveTimers.current[key] = setTimeout(() => saveNote(id, text, field), 800);
+  function pickColor(c: 'purple' | 'blue') {
+    localStorage.setItem('my-color', c);
+    setMyColor(c);
   }
 
-  function handleTranscript(id: string, field: 'content' | 'reviewer_content', transcript: string) {
-    const current = (field === 'content' ? notes[id] : reviewerNotes[id]) ?? '';
-    handleChange(id, current ? `${current} ${transcript}` : transcript, field);
-  }
-
+  // Group by stage
   const stages: { name: string; steps: ScreenshotEntry[] }[] = [];
   for (const page of pages) {
     const last = stages[stages.length - 1];
@@ -139,86 +282,105 @@ export default function SetupGuideReview() {
   return (
     <div style={{ minHeight: '100vh', background: '#fdf2f8', fontFamily: FONT, color: '#4a1942' }}>
 
+      {/* Header */}
       <div style={{
         position: 'sticky', top: 0, zIndex: 10,
-        display: 'flex', alignItems: 'center', gap: 14,
-        padding: '14px 28px',
-        background: 'rgba(253, 242, 248, 0.9)',
-        backdropFilter: 'blur(10px)',
+        display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+        padding: '12px 20px',
+        background: 'rgba(253,242,248,0.92)', backdropFilter: 'blur(10px)',
         borderBottom: '2px solid #fbcfe8',
-        boxShadow: '0 2px 12px rgba(236, 72, 153, 0.08)',
+        boxShadow: '0 2px 12px rgba(236,72,153,0.08)',
       }}>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: 18, color: '#be185d' }}>Setup Guide Review</div>
-          <div style={{ fontSize: 12, color: '#db2777', opacity: 0.75 }}>
-            {pages.length} steps · {stages.length} stages · Notes sync live · Click 🎤 to speak
-          </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 800, fontSize: 17, color: '#be185d' }}>Setup Guide Review</div>
+          <div style={{ fontSize: 11, color: '#db2777', opacity: 0.7 }}>{pages.length} steps · {stages.length} stages</div>
+        </div>
+
+        {/* Color picker */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 12, color: '#be185d', fontWeight: 700 }}>You are:</span>
+          {(['purple', 'blue'] as const).map(c => (
+            <button key={c} onClick={() => pickColor(c)} style={{
+              width: 28, height: 28, borderRadius: '50%', cursor: 'pointer',
+              background: c === 'purple' ? PURPLE : BLUE,
+              border: myColor === c ? '3px solid #be185d' : '3px solid transparent',
+              boxShadow: myColor === c ? '0 0 0 2px #fbcfe8' : 'none',
+              transition: 'all 0.15s',
+            }} />
+          ))}
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 40, padding: '28px 24px 48px' }}>
-        {stages.map((stage) => {
+      {!myColor && (
+        <div style={{
+          background: '#fce7f3', borderBottom: '2px solid #fbcfe8',
+          padding: '10px 20px', fontSize: 13, color: '#be185d', fontWeight: 700, textAlign: 'center',
+        }}>
+          👆 Pick your colour above before adding notes
+        </div>
+      )}
+
+      {/* Steps */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 32, padding: '24px 16px 48px' }}>
+        {stages.map(stage => {
           const accent = STAGE_COLORS[stage.name] ?? '#f9a8d4';
           return (
             <div key={stage.name}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-                <div style={{ height: 4, width: 32, borderRadius: 4, background: accent, flexShrink: 0 }} />
-                <span style={{ fontWeight: 800, fontSize: 17, color: '#9d174d', letterSpacing: '-0.2px' }}>{stage.name}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                <div style={{ height: 4, width: 28, borderRadius: 4, background: accent, flexShrink: 0 }} />
+                <span style={{ fontWeight: 800, fontSize: 15, color: '#9d174d' }}>{stage.name}</span>
                 <div style={{ flex: 1, height: 1, background: '#fbcfe8' }} />
-                <span style={{ fontSize: 12, color: '#db2777', fontWeight: 700, opacity: 0.6 }}>{stage.steps.length} steps</span>
+                <span style={{ fontSize: 11, color: '#db2777', fontWeight: 700, opacity: 0.6 }}>{stage.steps.length} steps</span>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {stage.steps.map((step, stepIdx) => (
                   <div key={step.id} style={{
-                    display: 'flex', background: '#fff', borderRadius: 16,
-                    border: '2px solid #fbcfe8', overflow: 'hidden',
-                    boxShadow: '0 2px 12px rgba(236, 72, 153, 0.06)',
+                    background: '#fff', borderRadius: 14,
+                    border: '2px solid #fbcfe8',
+                    boxShadow: '0 2px 10px rgba(236,72,153,0.05)',
+                    overflow: 'hidden',
+                    display: 'flex', flexDirection: isMobile ? 'column' : 'row',
                   }}>
                     {/* Screenshot */}
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', borderRight: '2px solid #fbcfe8' }}>
+                    <div style={{ flex: 1, borderRight: isMobile ? 'none' : '2px solid #fbcfe8', borderBottom: isMobile ? '2px solid #fbcfe8' : 'none', display: 'flex', flexDirection: 'column' }}>
                       <div style={{
-                        display: 'flex', alignItems: 'center', gap: 10,
-                        padding: '10px 14px', background: '#fdf2f8',
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '8px 12px', background: '#fdf2f8',
                         borderBottom: '1px solid #fce7f3',
                       }}>
                         <span style={{
                           background: accent, color: '#fff', borderRadius: '50%',
-                          width: 24, height: 24, display: 'inline-flex',
+                          width: 22, height: 22, display: 'inline-flex',
                           alignItems: 'center', justifyContent: 'center',
-                          fontSize: 11, fontWeight: 800, flexShrink: 0,
+                          fontSize: 10, fontWeight: 800, flexShrink: 0,
                         }}>{stepIdx + 1}</span>
-                        <span style={{ fontWeight: 700, fontSize: 13, color: '#be185d' }}>
+                        <span style={{ fontWeight: 700, fontSize: 12, color: '#be185d' }}>
                           {step.id} — {step.title}
                         </span>
                       </div>
                       <img src={step.dataUrl} alt={step.title} style={{ width: '100%', display: 'block' }} />
                     </div>
 
-                    {/* Notes columns */}
+                    {/* Chat */}
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-
-                      {/* Person 1 — dark purple */}
-                      <BareNoteField
-                        value={notes[step.id] ?? ''}
-                        onChange={t => handleChange(step.id, t, 'content')}
-                        onTranscript={t => handleTranscript(step.id, 'content', t)}
-                        syncState={syncState[`${step.id}-content`] ?? null}
-                        textColor="#3b0764"
-                        accentColor="#7e22ce"
-                      />
-
-                      {/* Person 2 — dark blue */}
-                      <div style={{ borderTop: '2px solid #e0e7ff' }}>
-                        <BareNoteField
-                          value={reviewerNotes[step.id] ?? ''}
-                          onChange={t => handleChange(step.id, t, 'reviewer_content')}
-                          onTranscript={t => handleTranscript(step.id, 'reviewer_content', t)}
-                          syncState={syncState[`${step.id}-reviewer_content`] ?? null}
-                          textColor="#1e3a8a"
-                          accentColor="#2563eb"
+                      {isMobile ? (
+                        <ChatPanel
+                          stepId={step.id}
+                          messages={messages}
+                          myColor={myColor ?? 'purple'}
+                          onSend={sendMessage}
+                          fullScreen={false}
+                          onExpand={() => setExpandedStep(step.id)}
                         />
-                      </div>
+                      ) : (
+                        <ChatPanel
+                          stepId={step.id}
+                          messages={messages}
+                          myColor={myColor ?? 'purple'}
+                          onSend={sendMessage}
+                        />
+                      )}
                     </div>
                   </div>
                 ))}
@@ -227,66 +389,41 @@ export default function SetupGuideReview() {
           );
         })}
       </div>
-    </div>
-  );
-}
 
-// ── Bare note field (no chrome, just text + mic) ─────────────────────────────
-
-function BareNoteField({ value, onChange, onTranscript, syncState, textColor, accentColor }: {
-  value: string;
-  onChange: (t: string) => void;
-  onTranscript: (t: string) => void;
-  syncState: 'saving' | 'saved' | null;
-  textColor: string;
-  accentColor: string;
-}) {
-  const { listening, start, stop } = useSpeech(onTranscript);
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <textarea
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder="Type or speak…"
-        style={{
-          border: 'none', outline: 'none',
-          color: textColor, fontSize: 14, lineHeight: 1.7,
-          padding: '14px 44px 14px 14px',
-          resize: 'none', fontFamily: FONT,
-          background: 'transparent', minHeight: 120,
-          width: '100%', boxSizing: 'border-box',
-        }}
-      />
-      {/* Mic + saved indicator — floating top-right */}
-      <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
-        {syncState === 'saved' && (
-          <span style={{ fontSize: 10, color: '#22c55e', fontWeight: 700 }}>✓</span>
-        )}
-        <button
-          onClick={listening ? stop : start}
-          title={listening ? 'Stop' : 'Speak'}
-          style={{
-            background: listening ? accentColor : 'transparent',
-            border: `1.5px solid ${listening ? accentColor : accentColor + '55'}`,
-            borderRadius: '50%', width: 26, height: 26,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            cursor: 'pointer', transition: 'all 0.15s',
-            boxShadow: listening ? `0 0 0 3px ${accentColor}33` : 'none',
-          }}
-        >
-          {listening ? (
-            <svg width="9" height="9" viewBox="0 0 12 12" fill="#fff"><rect x="1" y="1" width="10" height="10" rx="2" /></svg>
-          ) : (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={accentColor} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="9" y="2" width="6" height="12" rx="3" />
-              <path d="M5 10a7 7 0 0 0 14 0" />
-              <line x1="12" y1="19" x2="12" y2="22" />
-              <line x1="9" y1="22" x2="15" y2="22" />
-            </svg>
-          )}
-        </button>
-      </div>
+      {/* Mobile full-screen chat overlay */}
+      {expandedStep && (() => {
+        const step = pages.find(p => p.id === expandedStep);
+        if (!step) return null;
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 100,
+            background: '#fff', display: 'flex', flexDirection: 'column',
+          }}>
+            <div style={{
+              padding: '12px 16px', background: '#fdf2f8',
+              borderBottom: '2px solid #fbcfe8',
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              <span style={{ fontWeight: 700, fontSize: 14, color: '#be185d', flex: 1 }}>
+                {step.id} — {step.title}
+              </span>
+              <button onClick={() => setExpandedStep(null)} style={{
+                background: 'none', border: 'none', fontSize: 20,
+                cursor: 'pointer', color: '#be185d', lineHeight: 1,
+              }}>✕</button>
+            </div>
+            <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <ChatPanel
+                stepId={expandedStep}
+                messages={messages}
+                myColor={myColor ?? 'purple'}
+                onSend={sendMessage}
+                fullScreen
+              />
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
