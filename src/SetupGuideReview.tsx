@@ -65,30 +65,6 @@ function useSpeech(onTranscript: (text: string) => void) {
   return { listening, start, stop };
 }
 
-function MicButton({ onTranscript }: { onTranscript: (t: string) => void }) {
-  const { listening, start, stop } = useSpeech(onTranscript);
-  return (
-    <button onClick={listening ? stop : start} title={listening ? 'Stop' : 'Speak'} style={{
-      background: listening ? '#ec4899' : '#fce7f3',
-      border: `2px solid ${listening ? '#be185d' : '#fbcfe8'}`,
-      borderRadius: '50%', width: 28, height: 28,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s',
-      boxShadow: listening ? '0 0 0 4px rgba(236,72,153,0.2)' : 'none',
-    }}>
-      {listening ? (
-        <svg width="10" height="10" viewBox="0 0 12 12" fill="#fff"><rect x="1" y="1" width="10" height="10" rx="2" /></svg>
-      ) : (
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#be185d" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="9" y="2" width="6" height="12" rx="3" />
-          <path d="M5 10a7 7 0 0 0 14 0" />
-          <line x1="12" y1="19" x2="12" y2="22" />
-          <line x1="9" y1="22" x2="15" y2="22" />
-        </svg>
-      )}
-    </button>
-  );
-}
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
