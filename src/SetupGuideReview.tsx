@@ -76,17 +76,37 @@ export default function SetupGuideReview() {
   const pages = screenshots as ScreenshotEntry[];
 
   useEffect(() => {
-    supabase.from('notes').select('step_id, content, reviewer_content').then(({ data }) => {
-      if (!data) return;
+    async function loadAndMigrate() {
+      // Load existing notes from Supabase
+      const { data } = await supabase.from('notes').select('step_id, content, reviewer_content');
       const n: Record<string, string> = {};
       const r: Record<string, string> = {};
-      (data as { step_id: string; content: string; reviewer_content: string }[]).forEach(row => {
+      (data ?? []).forEach((row: { step_id: string; content: string; reviewer_content: string }) => {
         n[row.step_id] = row.content;
         r[row.step_id] = row.reviewer_content;
       });
+
+      // Migrate any notes still in localStorage
+      const LEGACY_KEY = 'setup-guide-notes';
+      try {
+        const raw = localStorage.getItem(LEGACY_KEY);
+        if (raw) {
+          const local: Record<string, string> = JSON.parse(raw);
+          const toUpsert = Object.entries(local)
+            .filter(([id, content]) => content.trim() && !n[id])
+            .map(([step_id, content]) => ({ step_id, content, reviewer_content: '' }));
+          if (toUpsert.length > 0) {
+            await supabase.from('notes').upsert(toUpsert, { onConflict: 'step_id' });
+            toUpsert.forEach(({ step_id, content }) => { n[step_id] = content; });
+          }
+          localStorage.removeItem(LEGACY_KEY);
+        }
+      } catch { /* ignore */ }
+
       setNotes(n);
       setReviewerNotes(r);
-    });
+    }
+    loadAndMigrate();
   }, []);
 
   const saveNote = useCallback(async (id: string, content: string, field: 'content' | 'reviewer_content') => {
